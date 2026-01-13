@@ -4,7 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 # Ganti dengan token bot Anda dari BotFather
-TOKEN = 'YOUR_BOT_TOKEN'
+TOKEN = '8500413116:AAESjylyadhRiN19KDC8bUKOXY5Yo1_Kqjw'
 
 # File untuk menyimpan data (per user)
 DATA_FILE = 'user_data.json'
