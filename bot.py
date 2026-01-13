@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -36,13 +37,12 @@ def save_data(data):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "💵 *IN & OUT GIBZZ!*\n\n"
-        "📌 *Perintah:*\n"
-        "➕ /in  – Catat pemasukan\n"
-        "➖ /out – Catat pengeluaran\n"
-        "💰 /balance – Lihat saldo\n"
-        "📜 /history – Riwayat transaksi\n"
-        "⚙️ /config – Edit / hapus transaksi\n\n"
-        "✨ Input bertahap & otomatis Rupiah 🇮🇩",
+        "➕ /in  – Pemasukan\n"
+        "➖ /out – Pengeluaran\n"
+        "💰 /balance – Saldo\n"
+        "📜 /history – Riwayat\n"
+        "⚙️ /config – Edit / Hapus\n\n"
+        "Success is not final; failure is not fatal: It is the courage to continue that counts.",
         parse_mode="Markdown"
     )
 
@@ -52,71 +52,105 @@ async def in_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data['mode'] = 'in'
     context.user_data['step'] = 'amount'
-    await update.message.reply_text(
-        "➕ *PEMASUKAN*\n\n💵 Masukkan *jumlah*: ",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("➕ *PEMASUKAN*\n💵 Masukkan jumlah:", parse_mode="Markdown")
 
 
 async def out_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data['mode'] = 'out'
     context.user_data['step'] = 'amount'
-    await update.message.reply_text(
-        "➖ *PENGELUARAN*\n\n💸 Masukkan *jumlah*: ",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("➖ *PENGELUARAN*\n💸 Masukkan jumlah:", parse_mode="Markdown")
 
 
-# ================= STEP HANDLER =================
-async def step_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'step' not in context.user_data:
-        return
-
+# ================= TEXT HANDLER =================
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    data = load_data()
     text = update.message.text.strip()
+    data = load_data()
 
     if user_id not in data:
         data[user_id] = {'transactions': []}
 
-    # STEP 1 - AMOUNT
-    if context.user_data['step'] == 'amount':
+    # ========= MODE EDIT =========
+    if 'editing' in context.user_data:
+        trans_id = context.user_data['editing']
+        transaction = next((t for t in data[user_id]['transactions'] if t['id'] == trans_id), None)
+
+        if not transaction:
+            context.user_data.clear()
+            await update.message.reply_text("❌ Transaksi tidak ditemukan.")
+            return
+
+        if text.lower() == 'hapus':
+            data[user_id]['transactions'] = [
+                t for t in data[user_id]['transactions'] if t['id'] != trans_id
+            ]
+            save_data(data)
+            context.user_data.clear()
+            await update.message.reply_text("🗑️ Transaksi berhasil dihapus.")
+            return
+
         try:
-            amount = float(text)
-            context.user_data['temp_amount'] = amount
-            context.user_data['step'] = 'description'
+            parts = text.split()
+            if len(parts) < 3:
+                raise ValueError
+
+            new_type = parts[0].lower()
+            if new_type not in ['in', 'out']:
+                raise ValueError
+
+            transaction['type'] = new_type
+            transaction['amount'] = float(parts[1])
+            transaction['description'] = ' '.join(parts[2:])
+
+            save_data(data)
+            context.user_data.clear()
+            await update.message.reply_text("✅ Transaksi berhasil diperbarui.")
+        except:
             await update.message.reply_text(
-                "📝 Masukkan *deskripsi*: ",
+                "❌ Format salah.\n"
+                "Gunakan:\n"
+                "`in 10000 Gaji`\n"
+                "`out 5000 Jajan`\n"
+                "atau ketik *hapus*",
                 parse_mode="Markdown"
             )
-        except ValueError:
+        return
+
+    # ========= MODE INPUT IN / OUT =========
+    if 'step' in context.user_data:
+        if context.user_data['step'] == 'amount':
+            try:
+                context.user_data['temp_amount'] = float(text)
+                context.user_data['step'] = 'description'
+                await update.message.reply_text("📝 Masukkan deskripsi:")
+            except ValueError:
+                await update.message.reply_text("❌ Jumlah harus angka.")
+            return
+
+        if context.user_data['step'] == 'description':
+            transaction = {
+                'id': len(data[user_id]['transactions']) + 1,
+                'type': context.user_data['mode'],
+                'amount': context.user_data['temp_amount'],
+                'description': text,
+                'time': datetime.now().strftime("%d-%m-%Y %H:%M")
+            }
+
+            data[user_id]['transactions'].append(transaction)
+            save_data(data)
+
+            emoji = "✅" if transaction['type'] == 'in' else "📤"
             await update.message.reply_text(
-                "❌ Jumlah harus angka!\n💡 Contoh: 50000"
+                f"{emoji} *Transaksi tersimpan!*\n\n"
+                f"🕒 {transaction['time']}\n"
+                f"💰 {rupiah(transaction['amount'])}\n"
+                f"📝 {transaction['description']}",
+                parse_mode="Markdown"
             )
 
-    # STEP 2 - DESCRIPTION
-    elif context.user_data['step'] == 'description':
-        transaction = {
-            'id': len(data[user_id]['transactions']) + 1,
-            'type': context.user_data['mode'],
-            'amount': context.user_data['temp_amount'],
-            'description': text
-        }
-
-        data[user_id]['transactions'].append(transaction)
-        save_data(data)
-
-        emoji = "✅" if transaction['type'] == 'in' else "📤"
-
-        await update.message.reply_text(
-            f"{emoji} *Transaksi berhasil dicatat!*\n\n"
-            f"💰 Jumlah: {rupiah(transaction['amount'])}\n"
-            f"📝 Deskripsi: {transaction['description']}",
-            parse_mode="Markdown"
-        )
-
-        context.user_data.clear()
+            context.user_data.clear()
+            return
 
 
 # ================= BALANCE =================
@@ -124,7 +158,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     data = load_data()
 
-    if user_id not in data or not data[user_id]['transactions']:
+    if not data.get(user_id, {}).get('transactions'):
         await update.message.reply_text("📭 Belum ada transaksi.")
         return
 
@@ -146,14 +180,15 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     data = load_data()
 
-    if user_id not in data or not data[user_id]['transactions']:
+    if not data.get(user_id, {}).get('transactions'):
         await update.message.reply_text("📭 Belum ada transaksi.")
         return
 
     text = "📜 *RIWAYAT TRANSAKSI*\n\n"
     for t in data[user_id]['transactions']:
         icon = "➕" if t['type'] == 'in' else "➖"
-        text += f"{icon} ID {t['id']} | {rupiah(t['amount'])} | {t['description']}\n"
+        waktu = t.get('time', '-')
+        text += f"{icon} {waktu} | {rupiah(t['amount'])} | {t['description']}\n"
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -163,18 +198,17 @@ async def config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     data = load_data()
 
-    if user_id not in data or not data[user_id]['transactions']:
+    if not data.get(user_id, {}).get('transactions'):
         await update.message.reply_text("⚙️ Tidak ada transaksi.")
         return
 
-    keyboard = []
-    for t in data[user_id]['transactions']:
-        keyboard.append([
-            InlineKeyboardButton(
-                f"✏️ ID {t['id']} - {rupiah(t['amount'])}",
-                callback_data=f"edit_{t['id']}"
-            )
-        ])
+    keyboard = [
+        [InlineKeyboardButton(
+            f"✏️ {t.get('time','-')} | {rupiah(t['amount'])}",
+            callback_data=f"edit_{t['id']}"
+        )]
+        for t in data[user_id]['transactions']
+    ]
 
     await update.message.reply_text(
         "⚙️ *Pilih transaksi:*",
@@ -188,55 +222,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = str(query.from_user.id)
-    data = load_data()
-
-    if query.data.startswith("edit_"):
-        trans_id = int(query.data.split("_")[1])
-        transaction = next((t for t in data[user_id]['transactions'] if t['id'] == trans_id), None)
-
-        if transaction:
-            context.user_data['editing'] = trans_id
-            await query.edit_message_text(
-                f"✏️ *Edit Transaksi ID {trans_id}*\n\n"
-                "Format:\n"
-                "`in 10000 Gaji`\n"
-                "`out 5000 Jajan`\n\n"
-                "🗑️ Kirim *hapus* untuk menghapus",
-                parse_mode="Markdown"
-            )
-
-
-# ================= EDIT =================
-async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'editing' not in context.user_data:
-        return
-
-    user_id = str(update.effective_user.id)
-    data = load_data()
-    trans_id = context.user_data['editing']
-    text = update.message.text.strip()
-
-    transaction = next((t for t in data[user_id]['transactions'] if t['id'] == trans_id), None)
-    if not transaction:
-        return
-
-    if text.lower() == 'hapus':
-        data[user_id]['transactions'] = [t for t in data[user_id]['transactions'] if t['id'] != trans_id]
-        save_data(data)
-        await update.message.reply_text("🗑️ Transaksi dihapus.")
-    else:
-        try:
-            parts = text.split()
-            transaction['type'] = parts[0]
-            transaction['amount'] = float(parts[1])
-            transaction['description'] = ' '.join(parts[2:])
-            save_data(data)
-            await update.message.reply_text("✅ Transaksi diperbarui.")
-        except:
-            await update.message.reply_text("❌ Format salah.")
-
+    trans_id = int(query.data.split("_")[1])
     context.user_data.clear()
+    context.user_data['editing'] = trans_id
+
+    await query.edit_message_text(
+        "✏️ *EDIT TRANSAKSI*\n\n"
+        "Kirim:\n"
+        "`in 10000 Gaji`\n"
+        "`out 5000 Jajan`\n\n"
+        "🗑️ atau ketik *hapus*",
+        parse_mode="Markdown"
+    )
 
 
 # ================= MAIN =================
@@ -251,8 +248,7 @@ def main():
     app.add_handler(CommandHandler("config", config))
 
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, step_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     app.run_polling()
 
